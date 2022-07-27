@@ -7,11 +7,13 @@ import {
 import Fuse from 'fuse.js';
 
 import {
-  pd, throttledPdAxiosRequest, pdParallelFetch,
+  pd, throttledPdAxiosRequest,
 } from 'util/pd-api-wrapper';
 
 import {
-  filterIncidentsByField, filterIncidentsByFieldOfList,
+  filterIncidentsByField,
+  filterIncidentsByFieldOfList,
+  INCIDENT_API_RESULT_LIMIT,
 } from 'util/incidents';
 import {
   pushToArray,
@@ -73,7 +75,7 @@ export function* getIncidentsAsync() {
 
 export function* getIncidents() {
   try {
-    //  Build params from query settings and call pd lib
+    //  Build base params from query settings
     const {
       sinceDate,
       incidentStatus,
@@ -84,28 +86,44 @@ export function* getIncidents() {
       searchQuery,
     } = yield select(selectQuerySettings);
 
-    const params = {
+    const baseParams = {
       since: sinceDate.toISOString(),
       until: new Date().toISOString(),
+      limit: INCIDENT_API_RESULT_LIMIT,
+      total: true,
       include: ['first_trigger_log_entries', 'external_references'],
     };
 
-    if (incidentStatus) params.statuses = incidentStatus;
-    if (incidentUrgency) params.urgencies = incidentUrgency;
-    if (teamIds.length) params.team_ids = teamIds;
-    if (serviceIds.length) params.service_ids = serviceIds;
+    if (incidentStatus) baseParams.statuses = incidentStatus;
+    if (incidentUrgency) baseParams.urgencies = incidentUrgency;
+    if (teamIds.length) baseParams.team_ids = teamIds;
+    if (serviceIds.length) baseParams.service_ids = serviceIds;
 
-    const fetchedIncidents = yield pdParallelFetch('incidents', params);
+    // Define API requests to be made in parallel
+    const numberOfApiCalls = Math.ceil(MAX_INCIDENTS_LIMIT / INCIDENT_API_RESULT_LIMIT);
+    const incidentRequests = [];
+    for (let i = 0; i < numberOfApiCalls; i++) {
+      const params = { ...baseParams };
+      params.offset = i * INCIDENT_API_RESULT_LIMIT;
+      incidentRequests.push(call(throttledPdAxiosRequest, 'GET', 'incidents', params));
+    }
+    const incidentResults = yield all(incidentRequests);
+
+    // Stitch results together
+    const incidentResultsData = incidentResults.map((res) => [...res.data.incidents]);
+    const fetchedIncidents = [];
+    incidentResultsData.forEach((data) => {
+      data.forEach((incident) => fetchedIncidents.push(incident));
+    });
+
+    console.log('fetchedIncidents', fetchedIncidents);
 
     // Sort incidents by reverse created_at date (i.e. recent incidents at the top)
     fetchedIncidents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    // FIXME: Temporary fix for batched calls over prescribed limit - need to use new API library
-    const incidents = fetchedIncidents.slice(0, MAX_INCIDENTS_LIMIT);
-
     yield put({
       type: FETCH_INCIDENTS_COMPLETED,
-      incidents,
+      incidents: fetchedIncidents,
     });
 
     // Filter incident list on priority (can't do this from API)

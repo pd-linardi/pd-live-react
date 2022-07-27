@@ -19,6 +19,8 @@ export const SNOOZE_TIMES = {
 
 export const INCIDENT_STATES = [TRIGGERED, ACKNOWLEDGED, RESOLVED];
 
+export const INCIDENT_API_RESULT_LIMIT = 100;
+
 // Helper function to filter incidents by json path + possible values
 // eslint-disable-next-line max-len
 export const filterIncidentsByField = (incidents, jsonPath, possibleValues) => incidents.filter((incident) => {
