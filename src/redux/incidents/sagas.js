@@ -7,7 +7,7 @@ import {
 import Fuse from 'fuse.js';
 
 import {
-  pd, throttledPdAxiosRequest,
+  pd, throttledPdAxiosRequest, pdParallelFetch,
 } from 'util/pd-api-wrapper';
 
 import {
@@ -99,24 +99,11 @@ export function* getIncidents() {
     if (teamIds.length) baseParams.team_ids = teamIds;
     if (serviceIds.length) baseParams.service_ids = serviceIds;
 
-    // Define API requests to be made in parallel
-    const numberOfApiCalls = Math.ceil(MAX_INCIDENTS_LIMIT / INCIDENT_API_RESULT_LIMIT);
-    const incidentRequests = [];
-    for (let i = 0; i < numberOfApiCalls; i++) {
-      const params = { ...baseParams };
-      params.offset = i * INCIDENT_API_RESULT_LIMIT;
-      incidentRequests.push(call(throttledPdAxiosRequest, 'GET', 'incidents', params));
-    }
-    const incidentResults = yield all(incidentRequests);
-
-    // Stitch results together
-    const incidentResultsData = incidentResults.map((res) => [...res.data.incidents]);
-    const fetchedIncidents = [];
-    incidentResultsData.forEach((data) => {
-      data.forEach((incident) => fetchedIncidents.push(incident));
-    });
-
-    console.log('fetchedIncidents', fetchedIncidents);
+    const fetchedIncidents = yield call(pdParallelFetch,
+      'incidents', baseParams, MAX_INCIDENTS_LIMIT);
+    const allIncidentIDs = fetchedIncidents.map((i) => i.id);
+    const uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+    console.log(`${allIncidentIDs.length} incidents, ${uniqueIncidentIDs.length} unique`);
 
     // Sort incidents by reverse created_at date (i.e. recent incidents at the top)
     fetchedIncidents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
