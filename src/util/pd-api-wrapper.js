@@ -73,7 +73,7 @@ const limiter = new Bottleneck({
   reservoirRefreshInterval: 60 * 1000, // must be divisible by 250
 
   // also use maxConcurrent and/or minTime for safety
-  maxConcurrent: 60,
+  maxConcurrent: 10,
   minTime: 80, // pick a value that makes sense for your use case
 });
 
@@ -90,7 +90,7 @@ const endpointIdentifier = (endpoint) => {
   return endpoint.split('/').pop();
 };
 
-export const pdParallelFetch = async (endpoint, params, progressCallback) => {
+export const pdParallelFetch = async (endpoint, params, maxResults = 10000, progressCallback) => {
   let requestParams = {
     limit: 100,
     total: true,
@@ -113,7 +113,7 @@ export const pdParallelFetch = async (endpoint, params, progressCallback) => {
     while (
       more
       && outerOffset + requestParams.offset < firstPage.total
-      && requestParams.offset < 10000
+      && requestParams.offset < maxResults
     ) {
       const promise = pdAxiosRequest('GET', endpoint, requestParams)
         .then(({
@@ -143,5 +143,13 @@ export const pdParallelFetch = async (endpoint, params, progressCallback) => {
     requestParams.offset = 0;
   }
   fetchedData.sort((a, b) => (reversedSortOrder ? compareCreatedAt(b, a) : compareCreatedAt(a, b)));
+  fetchedData = fetchedData.slice(-maxResults);
+
+  const allIncidentIDs = fetchedData.map((i) => i.id);
+  const uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+  console.log(
+    `pdParallelFetch Call: ${allIncidentIDs.length} incidents, ${uniqueIncidentIDs.length} unique , total ${firstPage.total}`,
+  );
+
   return fetchedData;
 };

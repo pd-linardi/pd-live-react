@@ -1,3 +1,5 @@
+/* eslint-disable no-unused-vars */
+/* eslint-disable no-undef */
 /* eslint-disable consistent-return */
 /* eslint-disable array-callback-return */
 import {
@@ -6,8 +8,10 @@ import {
 
 import Fuse from 'fuse.js';
 
+import axios from 'axios';
+
 import {
-  pd, throttledPdAxiosRequest,
+  pd, throttledPdAxiosRequest, pdParallelFetch,
 } from 'util/pd-api-wrapper';
 
 import {
@@ -20,7 +24,7 @@ import {
 } from 'util/helpers';
 import fuseOptions from 'config/fuse-config';
 import {
-  MAX_INCIDENTS_LIMIT,
+  MAX_INCIDENTS_LIMIT, PD_USER_TOKEN,
 } from 'config/constants';
 
 import selectQuerySettings from 'redux/query_settings/selectors';
@@ -77,53 +81,186 @@ export function* getIncidents() {
   try {
     //  Build base params from query settings
     const {
-      sinceDate,
-      incidentStatus,
-      incidentUrgency,
-      teamIds,
-      serviceIds,
+      // sinceDate,
+      // incidentStatus,
+      // incidentUrgency,
+      // teamIds,
+      // serviceIds,
       incidentPriority,
       searchQuery,
     } = yield select(selectQuerySettings);
 
+    // const baseParams = {
+    //   since: sinceDate.toISOString(),
+    //   until: new Date().toISOString(),
+    //   limit: INCIDENT_API_RESULT_LIMIT,
+    //   total: true,
+    //   include: ['first_trigger_log_entries', 'external_references'],
+    // };
+
+    // if (incidentStatus) baseParams.statuses = incidentStatus;
+    // if (incidentUrgency) baseParams.urgencies = incidentUrgency;
+    // if (teamIds.length) baseParams.team_ids = teamIds;
+    // if (serviceIds.length) baseParams.service_ids = serviceIds;
+
+    // // Define API requests to be made in parallel
+    // const numberOfApiCalls = Math.ceil(MAX_INCIDENTS_LIMIT / INCIDENT_API_RESULT_LIMIT);
+    // const incidentRequests = [];
+    // for (let i = 0; i < numberOfApiCalls; i++) {
+    //   const params = { ...baseParams };
+    //   params.offset = i * INCIDENT_API_RESULT_LIMIT;
+    //   incidentRequests.push(call(throttledPdAxiosRequest, 'GET', 'incidents', params));
+    // }
+    // const incidentResults = yield all(incidentRequests);
+
+    // // Stitch results together
+    // const incidentResultsData = incidentResults.map((res) => [...res.data.incidents]);
+    // const fetchedIncidents = [];
+    // incidentResultsData.forEach((data) => {
+    //   data.forEach((incident) => fetchedIncidents.push(incident));
+    // });
+
+    // console.log('fetchedIncidents', fetchedIncidents);
+
+    // Experiment Params:
+    const sinceDate = '2022-07-28T00%3A00%3A00.000Z';
+
+    // Axios Experiment
+    let fetchedIncidentsFromAxios = [];
+    let allIncidentIDs;
+    let uniqueIncidentIDs;
+
+    const page1Config = {
+      method: 'get',
+      url: `https://api.pagerduty.com/incidents?limit=100&offset=0&total=true&since=${sinceDate}&statuses[]=resolved&statuses[]=triggered&statuses[]=acknowledged&urgencies[]=high&urgencies[]=low&include[]=first_trigger_log_entries&include[]=external_references`,
+      headers: {
+        Authorization: `Token token=${PD_USER_TOKEN}`,
+        Accept: 'application/vnd.pagerduty+json;version=2',
+      },
+    };
+
+    const page2Config = {
+      method: 'get',
+      url: `https://api.pagerduty.com/incidents?limit=100&offset=100&total=true&since=${sinceDate}&statuses[]=resolved&statuses[]=triggered&statuses[]=acknowledged&urgencies[]=high&urgencies[]=low&include[]=first_trigger_log_entries&include[]=external_references`,
+      headers: {
+        Authorization: `Token token=${PD_USER_TOKEN}`,
+        Accept: 'application/vnd.pagerduty+json;version=2',
+      },
+    };
+
+    axios(page1Config)
+      .then((response) => {
+        const tempFetchedIncidentsFromAxios = [...response.data.incidents];
+        fetchedIncidentsFromAxios = [
+          ...fetchedIncidentsFromAxios,
+          ...tempFetchedIncidentsFromAxios,
+        ];
+        allIncidentIDs = tempFetchedIncidentsFromAxios.map((i) => i.id);
+        uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+        console.log(
+          `Axios Call 1: ${allIncidentIDs.length} incidents, ${uniqueIncidentIDs.length} unique, total ${response.data.total}`,
+        );
+      })
+      .catch((error) => {
+        console.log(error);
+      });
+
+    axios(page2Config)
+      .then((response) => {
+        const tempFetchedIncidentsFromAxios = [...response.data.incidents];
+        fetchedIncidentsFromAxios = [
+          ...fetchedIncidentsFromAxios,
+          ...tempFetchedIncidentsFromAxios,
+        ];
+        allIncidentIDs = tempFetchedIncidentsFromAxios.map((i) => i.id);
+        uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+        console.log(
+          `Axios Call 2: ${allIncidentIDs.length} incidents, ${uniqueIncidentIDs.length} unique, total ${response.data.total}`,
+        );
+
+        // Combined
+        allIncidentIDs = fetchedIncidentsFromAxios.map((i) => i.id);
+        uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+        console.log(
+          `Axios Combined: ${allIncidentIDs.length} incidents, ${uniqueIncidentIDs.length} unique`,
+        );
+      })
+      .catch((error) => {
+        console.log(error);
+      });
+
+    // throttledPdAxiosRequest Experiment
+    const page1ParamsThrottledAxios = {
+      since: sinceDate,
+      limit: INCIDENT_API_RESULT_LIMIT,
+      offset: 0,
+      total: true,
+      include: ['first_trigger_log_entries', 'external_references'],
+      statuses: ['triggered', 'acknowledged', 'resolved'],
+      urgencies: ['low', 'high'],
+    };
+
+    const page2ParamsThrottledAxios = {
+      since: sinceDate,
+      limit: INCIDENT_API_RESULT_LIMIT,
+      offset: 100,
+      total: true,
+      include: ['first_trigger_log_entries', 'external_references'],
+      statuses: ['triggered', 'acknowledged', 'resolved'],
+      urgencies: ['low', 'high'],
+    };
+
+    const incidentRequestsThrottledAxios = [];
+    let fetchedIncidentsFromThottledAxios = [];
+    incidentRequestsThrottledAxios.push(
+      call(throttledPdAxiosRequest, 'GET', 'incidents', page1ParamsThrottledAxios),
+    );
+    incidentRequestsThrottledAxios.push(
+      call(throttledPdAxiosRequest, 'GET', 'incidents', page2ParamsThrottledAxios),
+    );
+    const incidentResultsThrottledAxios = yield all(incidentRequestsThrottledAxios);
+
+    incidentResultsThrottledAxios.forEach((response, idx) => {
+      const incidents = [...response.data.incidents];
+      fetchedIncidentsFromThottledAxios = [...fetchedIncidentsFromThottledAxios, ...incidents];
+      allIncidentIDs = incidents.map((i) => i.id);
+      uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+      console.log(
+        `throttledPdAxiosRequest Call ${idx + 1}: ${allIncidentIDs.length} incidents, ${
+          uniqueIncidentIDs.length
+        } unique, total ${response.data.total}`,
+      );
+    });
+
+    allIncidentIDs = fetchedIncidentsFromThottledAxios.map((i) => i.id);
+    uniqueIncidentIDs = [...new Set(allIncidentIDs)];
+    console.log(
+      `throttledPdAxiosRequest Combined: ${allIncidentIDs.length} incidents, ${uniqueIncidentIDs.length} unique`,
+    );
+
+    // pdParallelFetch Experiment
     const baseParams = {
-      since: sinceDate.toISOString(),
-      until: new Date().toISOString(),
+      since: sinceDate,
       limit: INCIDENT_API_RESULT_LIMIT,
       total: true,
       include: ['first_trigger_log_entries', 'external_references'],
+      statuses: ['triggered', 'acknowledged', 'resolved'],
+      urgencies: ['low', 'high'],
     };
 
-    if (incidentStatus) baseParams.statuses = incidentStatus;
-    if (incidentUrgency) baseParams.urgencies = incidentUrgency;
-    if (teamIds.length) baseParams.team_ids = teamIds;
-    if (serviceIds.length) baseParams.service_ids = serviceIds;
-
-    // Define API requests to be made in parallel
-    const numberOfApiCalls = Math.ceil(MAX_INCIDENTS_LIMIT / INCIDENT_API_RESULT_LIMIT);
-    const incidentRequests = [];
-    for (let i = 0; i < numberOfApiCalls; i++) {
-      const params = { ...baseParams };
-      params.offset = i * INCIDENT_API_RESULT_LIMIT;
-      incidentRequests.push(call(throttledPdAxiosRequest, 'GET', 'incidents', params));
-    }
-    const incidentResults = yield all(incidentRequests);
-
-    // Stitch results together
-    const incidentResultsData = incidentResults.map((res) => [...res.data.incidents]);
-    const fetchedIncidents = [];
-    incidentResultsData.forEach((data) => {
-      data.forEach((incident) => fetchedIncidents.push(incident));
-    });
-
-    console.log('fetchedIncidents', fetchedIncidents);
+    const fetchedIncidents = yield call(
+      pdParallelFetch,
+      'incidents',
+      baseParams,
+      MAX_INCIDENTS_LIMIT,
+    );
 
     // Sort incidents by reverse created_at date (i.e. recent incidents at the top)
-    fetchedIncidents.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    fetchedIncidentsFromAxios.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     yield put({
       type: FETCH_INCIDENTS_COMPLETED,
-      incidents: fetchedIncidents,
+      incidents: fetchedIncidentsFromAxios,
     });
 
     // Filter incident list on priority (can't do this from API)
@@ -132,6 +269,7 @@ export function* getIncidents() {
     // Filter updated incident list by query; updates memoized data within incidents table
     yield call(filterIncidentsByQueryImpl, { searchQuery });
   } catch (e) {
+    console.log('err', e);
     yield put({ type: FETCH_INCIDENTS_ERROR, message: e.message });
     yield put({
       type: UPDATE_CONNECTION_STATUS_REQUESTED,
